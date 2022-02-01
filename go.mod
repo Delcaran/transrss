@@ -1,4 +1,4 @@
-module github.com/grooveygr/transrss
+module github.com/Delcaran/transrss
 
 require (
 	github.com/PuerkitoBio/goquery v1.5.0 // indirect
