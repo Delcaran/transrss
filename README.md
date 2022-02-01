@@ -19,7 +19,12 @@ cd transrss
 go build
 ```
 
-Cross compile to any supported golang platform. example for RPI 3:
+Cross compile to any supported golang platform. 
+Example for RPI 1:
+```
+GOOS=linux GOARCH=arm GOARM=6 go build
+```
+Example for RPI 3:
 ```
 GOOS=linux GOARCH=arm GOARM=7 go build
 ```
