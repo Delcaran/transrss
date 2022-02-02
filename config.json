@@ -1,0 +1,14 @@
+{
+    "feed": "https://showrss.info/user/18844.rss?magnets=true&namespaces=true&name=null&quality=null&re=null",
+    "download": ".",
+    "cache": {
+        "path": "./cache.json",
+        "size": 100
+    },
+    "rpc": {
+        "host": "127.0.0.1",
+        "port": 9091,
+        "user": "",
+        "pass": ""
+    }
+}

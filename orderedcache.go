@@ -6,7 +6,7 @@ import (
 	"log"
 )
 
-type orderedCache struct {
+type OrderedCache struct {
 	path string
 	size int
 
@@ -15,7 +15,7 @@ type orderedCache struct {
 	seekmap map[string]bool
 }
 
-func newOrderedCache(path string, size int) *orderedCache {
+func newOrderedCache(path string, size int) *OrderedCache {
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
 		log.Println("Creating new cache")
@@ -37,7 +37,7 @@ func newOrderedCache(path string, size int) *orderedCache {
 		seekmap[item] = true
 	}
 
-	return &orderedCache{
+	return &OrderedCache{
 		path:    path,
 		size:    size,
 		items:   items,
@@ -45,7 +45,7 @@ func newOrderedCache(path string, size int) *orderedCache {
 	}
 }
 
-func (o *orderedCache) add(item string) {
+func (o *OrderedCache) add(item string) {
 	o.dirty = true
 	o.seekmap[item] = true
 	o.items = append(o.items, item)
@@ -55,11 +55,11 @@ func (o *orderedCache) add(item string) {
 	}
 }
 
-func (o *orderedCache) exists(item string) bool {
+func (o *OrderedCache) exists(item string) bool {
 	return o.seekmap[item]
 }
 
-func (o *orderedCache) commit() {
+func (o *OrderedCache) commit() {
 	if !o.dirty {
 		return
 	}
