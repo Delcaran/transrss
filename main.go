@@ -10,7 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
+	"strings"
 
 	"github.com/Tubbebubbe/transmission"
 	"github.com/mmcdole/gofeed"
@@ -19,8 +19,7 @@ import (
 type Release struct {
 	title   string
 	series  string
-	season  int
-	episode int
+	episode string
 	info    string
 	link    string
 	hash    string
@@ -32,6 +31,10 @@ func (rel *Release) checkDownload(cache *OrderedCache, releases []Release) []Rel
 		return releases
 	}
 	return append(releases, *rel)
+}
+
+func (rel *Release) isReplacement() bool {
+	return strings.Contains(rel.info, "REPACK") || strings.Contains(rel.info, "PROPER")
 }
 
 type CacheInfo struct {
@@ -57,7 +60,7 @@ type Config struct {
 	RPC      RPCInfo   `json: "rpc"`
 }
 
-var regexTitle = regexp.MustCompile(`^(.+)\s+S(\d{2})E(\d{2})\s+(.+)`)
+var regexTitle = regexp.MustCompile(`^(.+)\s+(S\d{2}E\d{2})\s+(.+)`)
 var regexURI = regexp.MustCompile(`^magnet:\?xt=urn:btih:(\w{40})\&.+`)
 
 func buildRelease(item *gofeed.Item) (Release, error) {
@@ -65,17 +68,13 @@ func buildRelease(item *gofeed.Item) (Release, error) {
 	var err error
 	rel.title = item.Title
 	titleMatch := regexTitle.FindAllStringSubmatch(item.Title, -1)
-	if len(titleMatch[0]) == 5 {
+	if len(titleMatch[0]) == 4 {
 		rel.series = titleMatch[0][1]
-		rel.season, err = strconv.Atoi(titleMatch[0][2])
-		if err != nil {
-			return rel, errors.New(fmt.Sprintf("Failed parsing season number: %v", err))
-		}
-		rel.episode, err = strconv.Atoi(titleMatch[0][3])
+		rel.episode, err = titleMatch[0][2]
 		if err != nil {
 			return rel, errors.New(fmt.Sprintf("Failed parsing episode number: %v", err))
 		}
-		rel.info = titleMatch[0][4]
+		rel.info = titleMatch[0][3]
 	} else {
 		return rel, errors.New("No title match")
 	}
@@ -124,7 +123,6 @@ func main() {
 	config, err := loadConfig(*configPath)
 	if err != nil {
 		log.Fatalln("Failed configuration loading: %v", err)
-		return
 	}
 
 	// Downloading feed
@@ -144,9 +142,8 @@ func main() {
 		rel, err := buildRelease(item)
 		if err != nil {
 			log.Fatalln("Failed parsing feed item: ", err)
-		} else {
-			releases = rel.checkDownload(cache, releases)
 		}
+		releases = rel.checkDownload(cache, releases)
 	}
 
 	// enqueue found releases and delete pre-REPACKs and pre-PROPERs
@@ -154,19 +151,45 @@ func main() {
 	if len(releases) > 0 {
 		tclient := transmission.New(config.RPC.URL(), config.RPC.User, config.RPC.Pass)
 		for _, rel := range releases {
+			// add magnet
 			addcmd, err := transmission.NewAddCmdByMagnet(rel.link)
 			if err != nil {
 				log.Fatalln("Failed creating add cmd: ", err)
 			}
-			addcmd.SetDownloadDir(filepath.Join(config.Download, rel.series))
+			downloadDir := filepath.Join(config.Download, rel.series)
+			addcmd.SetDownloadDir(downloadDir)
 
 			_, err = tclient.ExecuteAddCommand(addcmd)
 			if err != nil {
 				log.Fatalln("Failed adding torrent to transmission: ", err)
-			} else {
-				cache.add(rel.hash)
-				log.Println("Added: ", rel.title)
-				cache.commit()
+			}
+			cache.add(rel.hash)
+			log.Println("Added: ", rel.title)
+			cache.commit()
+
+			// check for PROPER/REPACK
+			if rel.isReplacement() {
+				torrents, err := tclient.GetTorrents()
+				if err != nil {
+					log.Fatalln("Failed to get torrents: ", err)
+				}
+				for _, torrent := range torrents {
+					nameMatch = strings.Contains(torrent.Name, rel.episode)
+					dirMatch = (torrent.DownloadDir == downloadDir)
+					if nameMatch && dirMatch {
+						delcmd, err := transmission.NewDelCmd(torrent.ID, true)
+						if err != nil {
+							log.Fatalln("Failed creating delete cmd: ", err)
+						}
+						_, err = tclient.ExecuteCommand(delcmd)
+						if err != nil {
+							log.Fatalln("Failed removing old torrent from transmission: ", err)
+						} else {
+							log.Println("Removed older release of %s %s", rel.series, rel.episode)
+						}
+						break
+					}
+				}
 			}
 		}
 	}
