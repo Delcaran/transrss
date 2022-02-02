@@ -37,6 +37,53 @@ func (rel *Release) isReplacement() bool {
 	return strings.Contains(rel.info, "REPACK") || strings.Contains(rel.info, "PROPER")
 }
 
+func (rel *Release) enqueue(tc *transmission.TransmissionClient, cache *OrderedCache, config *Config) {
+	// add magnet
+	addcmd, err := transmission.NewAddCmdByMagnet(rel.link)
+	if err != nil {
+		log.Println("Failed creating add cmd: ", err)
+		return
+	}
+	downloadDir := filepath.Join(config.Download, rel.series)
+	addcmd.SetDownloadDir(downloadDir)
+
+	_, err = tc.ExecuteAddCommand(addcmd)
+	if err != nil {
+		log.Println("Failed adding torrent to transmission: ", err)
+		return
+	}
+	cache.add(rel.hash)
+	log.Println("Added: ", rel.title)
+	cache.commit()
+
+	// check for PROPER/REPACK
+	if rel.isReplacement() {
+		torrents, err := tc.GetTorrents()
+		if err != nil {
+			log.Println("Failed to get torrents: ", err)
+			return
+		}
+		for _, torrent := range torrents {
+			nameMatch := strings.Contains(torrent.Name, rel.episode)
+			dirMatch := (torrent.DownloadDir == downloadDir)
+			if nameMatch && dirMatch {
+				delcmd, err := transmission.NewDelCmd(torrent.ID, true)
+				if err != nil {
+					log.Println("Failed creating delete cmd: ", err)
+					return
+				}
+				_, err = tc.ExecuteCommand(delcmd)
+				if err != nil {
+					log.Println("Failed removing old torrent from transmission: ", err)
+				} else {
+					log.Println("Removed older release of %s %s", rel.series, rel.episode)
+				}
+				break
+			}
+		}
+	}
+}
+
 type CacheInfo struct {
 	Path string `json: "path"`
 	Size int    `json: "size"`
@@ -110,6 +157,24 @@ func loadConfig(configPath string) (Config, error) {
 	return config, nil
 }
 
+func findReleases(config *Config, cache *OrderedCache) []Release {
+	fparser := gofeed.NewParser()
+	feed, err := fparser.ParseURL(config.Feed)
+	if err != nil {
+		log.Fatalln("Failed parsing feed: ", err)
+	}
+	var releases []Release
+
+	for _, item := range feed.Items {
+		rel, err := buildRelease(item)
+		if err != nil {
+			log.Fatalln("Failed parsing feed item: ", err)
+		}
+		releases = rel.checkDownload(cache, releases)
+	}
+	return releases
+}
+
 func main() {
 	// Load configuration
 
@@ -121,72 +186,17 @@ func main() {
 		log.Fatalln("Failed configuration loading: %v", err)
 	}
 
-	// Downloading feed
-
-	fparser := gofeed.NewParser()
-	feed, err := fparser.ParseURL(config.Feed)
-	if err != nil {
-		log.Fatalln("Failed parsing feed: ", err)
-	}
-
-	// find new releases to download
+	// Look for new releases
 
 	cache := newOrderedCache(config.Cache.Path, config.Cache.Size)
-	var releases []Release
-
-	for _, item := range feed.Items {
-		rel, err := buildRelease(item)
-		if err != nil {
-			log.Fatalln("Failed parsing feed item: ", err)
-		}
-		releases = rel.checkDownload(cache, releases)
-	}
+	releases := findReleases(&config, cache)
 
 	// enqueue found releases and delete pre-REPACKs and pre-PROPERs
 
 	if len(releases) > 0 {
 		tclient := transmission.New(config.RPC.URL(), config.RPC.User, config.RPC.Pass)
 		for _, rel := range releases {
-			// add magnet
-			addcmd, err := transmission.NewAddCmdByMagnet(rel.link)
-			if err != nil {
-				log.Fatalln("Failed creating add cmd: ", err)
-			}
-			downloadDir := filepath.Join(config.Download, rel.series)
-			addcmd.SetDownloadDir(downloadDir)
-
-			_, err = tclient.ExecuteAddCommand(addcmd)
-			if err != nil {
-				log.Fatalln("Failed adding torrent to transmission: ", err)
-			}
-			cache.add(rel.hash)
-			log.Println("Added: ", rel.title)
-			cache.commit()
-
-			// check for PROPER/REPACK
-			if rel.isReplacement() {
-				torrents, err := tclient.GetTorrents()
-				if err != nil {
-					log.Fatalln("Failed to get torrents: ", err)
-				}
-				for _, torrent := range torrents {
-					nameMatch := strings.Contains(torrent.Name, rel.episode)
-					dirMatch := (torrent.DownloadDir == downloadDir)
-					if nameMatch && dirMatch {
-						delcmd, err := transmission.NewDelCmd(torrent.ID, true)
-						if err != nil {
-							log.Fatalln("Failed creating delete cmd: ", err)
-						}
-						_, err = tclient.ExecuteCommand(delcmd)
-						if err != nil {
-							log.Fatalln("Failed removing old torrent from transmission: ", err)
-						} else {
-							log.Println("Removed older release of %s %s", rel.series, rel.episode)
-						}
-						break
-					}
-				}
-			}
+			rel.enqueue(&tclient, cache, &config)
 		}
 	}
 
