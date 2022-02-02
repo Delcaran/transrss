@@ -1,6 +1,6 @@
 {
     "feed": "https://showrss.info/user/18844.rss?magnets=true&namespaces=true&name=null&quality=null&re=null",
-    "download": ".",
+    "download": "/full/path/to/download",
     "cache": {
         "path": "./cache.json",
         "size": 100

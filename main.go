@@ -8,12 +8,12 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	//"path/filepath"
+	"path/filepath"
 	"regexp"
 	"strconv"
 
+	"github.com/Tubbebubbe/transmission"
 	"github.com/mmcdole/gofeed"
-	//"github.com/Tubbebubbe/transmission"
 )
 
 type Release struct {
@@ -26,6 +26,14 @@ type Release struct {
 	hash    string
 }
 
+func (rel *Release) checkDownload(cache *OrderedCache, releases []Release) []Release {
+	if cache.exists(rel.hash) {
+		log.Println("Skipped cached release ", rel.title)
+		return releases
+	}
+	return append(releases, *rel)
+}
+
 type CacheInfo struct {
 	Path string `json: "path"`
 	Size int    `json: "size"`
@@ -36,6 +44,10 @@ type RPCInfo struct {
 	Port int    `json: "port"`
 	User string `json: "user"`
 	Pass string `json: "pass"`
+}
+
+func (rpc *RPCInfo) URL() string {
+	return fmt.Sprintf("%s:%d/transmission/rpc", rpc.Host, rpc.Port)
 }
 
 type Config struct {
@@ -103,16 +115,6 @@ func loadConfig(configPath string) (Config, error) {
 	return config, nil
 }
 
-func (rel *Release) checkDownload(cache *OrderedCache, downloadList []string) []string {
-	// TODO: check PROPER/REPACK
-	if cache.exists(rel.hash) {
-		log.Println("Skipped cached release ", rel.title)
-		return downloadList
-	}
-	// TODO: check resolution? --> no, il feed puo' contenere le risoluzioni specifiche
-	return append(downloadList, rel.link)
-}
-
 func main() {
 	// Load configuration
 
@@ -124,7 +126,6 @@ func main() {
 		log.Fatalln("Failed configuration loading: %v", err)
 		return
 	}
-	fmt.Printf("%+v\n", config)
 
 	// Downloading feed
 
@@ -137,39 +138,38 @@ func main() {
 	// find new releases to download
 
 	cache := newOrderedCache(config.Cache.Path, config.Cache.Size)
-	var toDownload []string
+	var releases []Release
 
 	for _, item := range feed.Items {
 		rel, err := buildRelease(item)
 		if err != nil {
 			log.Fatalln("Failed parsing feed item: ", err)
 		} else {
-			toDownload = rel.checkDownload(cache, toDownload)
+			releases = rel.checkDownload(cache, releases)
 		}
 	}
-	fmt.Printf("%+v\n", toDownload)
 
-	// enqueue found releases
+	// enqueue found releases and delete pre-REPACKs and pre-PROPERs
 
-	/*
-		if downloadFolder != "" {
-			tclient := transmission.New(*tRPC, *tUser, *tPass) http://127.0.0.1:9091/transmission/rpc
-			addcmd, err := transmission.NewAddCmdByMagnet(item.Link)
+	if len(releases) > 0 {
+		tclient := transmission.New(config.RPC.URL(), config.RPC.User, config.RPC.Pass)
+		for _, rel := range releases {
+			addcmd, err := transmission.NewAddCmdByMagnet(rel.link)
 			if err != nil {
 				log.Fatalln("Failed creating add cmd: ", err)
 			}
+			addcmd.SetDownloadDir(filepath.Join(config.Download, rel.series))
 
 			_, err = tclient.ExecuteAddCommand(addcmd)
 			if err != nil {
 				log.Fatalln("Failed adding torrent to transmission: ", err)
+			} else {
+				cache.add(rel.hash)
+				log.Println("Added: ", rel.title)
+				cache.commit()
 			}
-		} else {
-			log.Println("Ignored: ", item.Title)
 		}
-		Cache.add(item.Link)
-		log.Println("Added: ", item.Title)
-		Cache.commit()
-	*/
+	}
 
 	log.Println("Done.")
 }
