@@ -65,15 +65,11 @@ var regexURI = regexp.MustCompile(`^magnet:\?xt=urn:btih:(\w{40})\&.+`)
 
 func buildRelease(item *gofeed.Item) (Release, error) {
 	var rel Release
-	var err error
 	rel.title = item.Title
 	titleMatch := regexTitle.FindAllStringSubmatch(item.Title, -1)
 	if len(titleMatch[0]) == 4 {
 		rel.series = titleMatch[0][1]
-		rel.episode, err = titleMatch[0][2]
-		if err != nil {
-			return rel, errors.New(fmt.Sprintf("Failed parsing episode number: %v", err))
-		}
+		rel.episode = titleMatch[0][2]
 		rel.info = titleMatch[0][3]
 	} else {
 		return rel, errors.New("No title match")
@@ -174,8 +170,8 @@ func main() {
 					log.Fatalln("Failed to get torrents: ", err)
 				}
 				for _, torrent := range torrents {
-					nameMatch = strings.Contains(torrent.Name, rel.episode)
-					dirMatch = (torrent.DownloadDir == downloadDir)
+					nameMatch := strings.Contains(torrent.Name, rel.episode)
+					dirMatch := (torrent.DownloadDir == downloadDir)
 					if nameMatch && dirMatch {
 						delcmd, err := transmission.NewDelCmd(torrent.ID, true)
 						if err != nil {
