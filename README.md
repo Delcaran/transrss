@@ -64,6 +64,6 @@ crontab -e
 
 ## TODOs
 
-[] Parse *all* possible episode formats: S#E#, #x##, #x#, #.##, #.#, #-##, etc...
-[] Handle the "multiple releases per episode" scenario
-[] Manage episode history
+- [] Parse *all* possible episode formats: S#E#, #x##, #x#, #.##, #.#, #-##, etc...
+- [] Handle the "multiple releases per episode" scenario
+- [] Manage episode history
