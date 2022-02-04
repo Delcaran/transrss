@@ -170,7 +170,7 @@ func findReleases(config *Config, cache *OrderedCache) []Release {
 func main() {
 	// Load configuration
 
-	configPath := flag.String("config", "./config.json", "Configuration path")
+	configPath := flag.String("config", "./transrss.json", "Configuration path")
 
 	flag.Parse()
 	config, err := loadConfig(*configPath)
