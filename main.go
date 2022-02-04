@@ -11,8 +11,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"context"
 
-	"github.com/Tubbebubbe/transmission"
+	"github.com/hekmon/transmissionrpc/v2"
 	"github.com/mmcdole/gofeed"
 )
 
@@ -37,42 +38,37 @@ func (rel *Release) isReplacement() bool {
 	return strings.Contains(rel.info, "REPACK") || strings.Contains(rel.info, "PROPER")
 }
 
-func (rel *Release) enqueue(tc *transmission.TransmissionClient, cache *OrderedCache, config *Config) {
+func (rel *Release) enqueue(tc *transmissionrpc.Client, cache *OrderedCache, config *Config) {
 	// add magnet
-	addcmd, err := transmission.NewAddCmdByMagnet(rel.link)
+	magnet := rel.link
+	torrent, err := tc.TorrentAdd(context.TODO(), transmissionrpc.TorrentAddPayload{
+		Filename: &magnet,
+	})
 	if err != nil {
-		log.Println("Failed creating add cmd: ", err)
+		log.Println(err)
 		return
 	}
-	downloadDir := filepath.Join(config.Download, rel.series)
-	addcmd.SetDownloadDir(downloadDir)
 
-	_, err = tc.ExecuteAddCommand(addcmd)
-	if err != nil {
-		log.Println("Failed adding torrent to transmission: ", err)
-		return
-	}
+	downloadDir := filepath.Join(config.Download, rel.series)
+	tc.TorrentSetLocation(context.TODO(), *torrent.ID, downloadDir, true) 
+
 	cache.add(rel.hash)
 	log.Println("Added: ", rel.title)
 	cache.commit()
 
 	// check for PROPER/REPACK
 	if rel.isReplacement() {
-		torrents, err := tc.GetTorrents()
+		torrents, err := tc.TorrentGetAll(context.TODO())
 		if err != nil {
 			log.Println("Failed to get torrents: ", err)
 			return
 		}
 		for _, torrent := range torrents {
-			nameMatch := strings.Contains(torrent.Name, rel.episode)
-			dirMatch := (torrent.DownloadDir == downloadDir)
+			nameMatch := strings.Contains(*torrent.Name, rel.episode)
+			dirMatch := (*torrent.DownloadDir == downloadDir)
 			if nameMatch && dirMatch {
-				delcmd, err := transmission.NewDelCmd(torrent.ID, true)
-				if err != nil {
-					log.Println("Failed creating delete cmd: ", err)
-					return
-				}
-				_, err = tc.ExecuteCommand(delcmd)
+				payload := transmissionrpc.TorrentRemovePayload{[]int64{*torrent.ID}, true}
+				err := tc.TorrentRemove(context.TODO(), payload)
 				if err != nil {
 					log.Println("Failed removing old torrent from transmission: ", err)
 				} else {
@@ -91,13 +87,9 @@ type CacheInfo struct {
 
 type RPCInfo struct {
 	Host string `json: "host"`
-	Port int    `json: "port"`
+	Port uint16 `json: "port"`
 	User string `json: "user"`
 	Pass string `json: "pass"`
-}
-
-func (rpc *RPCInfo) URL() string {
-	return fmt.Sprintf("%s:%d/transmission/rpc", rpc.Host, rpc.Port)
 }
 
 type Config struct {
@@ -194,9 +186,12 @@ func main() {
 	// enqueue found releases and delete pre-REPACKs and pre-PROPERs
 
 	if len(releases) > 0 {
-		tclient := transmission.New(config.RPC.URL(), config.RPC.User, config.RPC.Pass)
+		tclient, err := transmissionrpc.New(config.RPC.Host, config.RPC.User, config.RPC.Pass, &transmissionrpc.AdvancedConfig{Port:  config.RPC.Port})
+		if err != nil {
+			log.Fatalln("Failed creating client: %v", err)
+		}
 		for _, rel := range releases {
-			rel.enqueue(&tclient, cache, &config)
+			rel.enqueue(tclient, cache, &config)
 		}
 	}
 
